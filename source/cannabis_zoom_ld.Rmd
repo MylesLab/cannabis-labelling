@@ -1,0 +1,277 @@
+---
+title: "Cannabis LD heatmap and GWAS"
+author: "Sophie Watts"
+output:
+  html_document:
+    df_print: paged
+    toc: yes
+  html_notebook:
+    code_folding: hide
+    theme: cerulean
+    toc: yes
+    toc_float: yes
+    
+---
+
+```{r setup, message=FALSE, warning=FALSE}
+
+#load packages
+library("readr")
+library("dplyr")
+library("RColorBrewer")
+library("gplots")
+library("viridis")
+library("scales")
+library("tidyverse")
+library("cowplot")
+library("gridExtra")
+library("grid")
+library("genetics")
+library("LDheatmap")
+library("snpStats")
+library("devtools")
+library("emma")
+library("mlmm")
+library("data.table")
+library("ape")
+library("readxl")
+
+theme_set(theme_classic())
+```
+
+#Sesquiterpene GWAS
+
+##SNP Heatmap
+
+```{r sesqui_heatmap, warning=F, message=F}
+
+snp_pvals <- read_csv("../outputs/gwas_pvals_emmax_norm.csv")
+
+guaiol_snps <- dplyr::select(snp_pvals, SNP, guaiol_norm)
+colnames(guaiol_snps)[2] <- "pval"
+
+beta_snps <- dplyr::select(snp_pvals, SNP, b_eudesmol_norm)
+colnames(beta_snps)[2] <- "pval"
+
+gamma_snps <- dplyr::select(snp_pvals, SNP, g_eudesmol_norm)
+colnames(gamma_snps)[2] <- "pval"
+
+#filter snps so that they are just from chromosome 8
+guaiol_snps <- guaiol_snps[grep("S08_",guaiol_snps$SNP),]
+beta_snps <- beta_snps[grep("S08_",beta_snps$SNP),]
+gamma_snps <- gamma_snps[grep("S08_",gamma_snps$SNP),]
+
+#filter snps that have small p-values
+guaiol_snps <- guaiol_snps[guaiol_snps$pval <= 0.000004,]
+gamma_snps <- gamma_snps[gamma_snps$pval <= 0.000004,]
+beta_snps <- beta_snps[beta_snps$pval <= 0.000004,]
+
+
+#seperate SNP column to get the position
+guaiol_snps <- guaiol_snps %>% separate(SNP, 
+                c("chr", "pos","nucleo"))
+
+gamma_snps <- gamma_snps %>% separate(SNP, 
+                c("chr", "pos","nucleo"))
+
+beta_snps <- beta_snps %>% separate(SNP, 
+                c("chr", "pos","nucleo"))
+
+guaiol_snps$pos <- as.numeric(guaiol_snps$pos)
+gamma_snps$pos <- as.numeric(gamma_snps$pos)
+beta_snps$pos <- as.numeric(beta_snps$pos)
+
+
+#filter snps based on position
+guaiol_snps <- guaiol_snps[guaiol_snps$pos >= 76386500,]
+gamma_snps <- gamma_snps[gamma_snps$pos >= 76386500,]
+beta_snps <- beta_snps[beta_snps$pos >= 76386500,]
+
+#filter one more time for position
+guaiol_snps <- guaiol_snps[guaiol_snps$pos <= 78445242,]
+gamma_snps <- gamma_snps[gamma_snps$pos <= 78445242,]
+beta_snps <- beta_snps[beta_snps$pos <= 78445242,]
+
+snp_pos <- rbind(beta_snps, gamma_snps, guaiol_snps)
+
+
+#retain the intersect of the SNPs across the three sequiterpenes
+common_snps <- rbind(guaiol_snps, gamma_snps, beta_snps)
+common_snps <- common_snps[!duplicated(common_snps[ , "pos"]),]
+
+
+#read hapmap of genetic data.
+snp<- read_delim("../data/20191209_bedrocan_gen_filtered.hmp.txt", 
+    "\t", escape_double = FALSE, trim_ws = TRUE)
+#filter the hmp file to only have the snps we are interested in plotting
+snp_heatmap <-snp[snp$pos%in%common_snps$pos,]
+hapmap <- snp_heatmap
+
+#the following code was adapted from https://github.com/zhenbinHU/Sorghum_SNP_dataset/blob/master/zoon_in_gwas
+#cite it
+# a function convert hapmap to LDheatmap format
+# the input should be hapmap format
+  hapmap[12:dim(hapmap)[2]]<-apply(hapmap[12:dim(hapmap)[2]],2,as.character)
+  snp_dis<-as.numeric(as.character(hapmap$pos))
+  hapmap[hapmap=="AA"]<-"A/A"
+  hapmap[hapmap=="TT"]<-"T/T"
+  hapmap[hapmap=="CC"]<-"C/C"
+  hapmap[hapmap=="GG"]<-"G/G"
+  hapmap[hapmap=="AC"]<-"A/C"
+  hapmap[hapmap=="AG"]<-"A/G"
+  hapmap[hapmap=="AT"]<-"A/T"
+  hapmap[hapmap=="CG"]<-"C/G"
+  hapmap[hapmap=="CT"]<-"C/T"
+  hapmap[hapmap=="GT"]<-"G/T"
+  snp_infor<-hapmap[,1:11]
+  snp_data<-hapmap[,12:dim(hapmap)[2]]
+  snp_data<-t(snp_data)
+  snp_data<-as.data.frame(snp_data)
+  names(snp_data)<-as.character(snp_infor$'rs#')
+  num<-ncol(snp_data)
+  for(i in 1:num){
+    snp_data[,i]<-as.genotype(snp_data[,i])
+  }
+
+#make heatmap
+#pdf("../figures/heatmap_sesquis.pdf",width=6,height=6)
+rgb.palette <- colorRampPalette(rev(brewer.pal(9,"YlGnBu")))
+MyHeatmap<-LDheatmap(snp_data,snp_dis,flip=TRUE,color=rgb.palette(20),title="",name = "myLDgrob")
+#dev.off()
+
+
+```
+
+##Manhattan Zoom
+
+```{r sesqui_zoom, warning=F, message=F}
+
+guaiol_shape <- guaiol_snps
+guaiol_shape$chem <- "guaiol"
+
+gamma_shape <- gamma_snps
+gamma_shape$chem <- "gamma"
+
+beta_shape <- beta_snps
+beta_shape$chem <- "beta"
+
+chem_pvals <- rbind(guaiol_shape, beta_shape, gamma_shape)
+chem_pvals$chem <- as.factor(chem_pvals$chem)
+
+chem_pvals <- mutate(chem_pvals, log_p = -log10(pval))
+
+#load gene annotations to get the positions of the gene blocks to plot.
+sesqui_genes <- read_excel("../data/sesqui_genes.xlsx")
+
+sesqui_zoom <- ggplot(chem_pvals, aes(x=pos, y=log_p, group=chem))+
+  geom_point(aes(shape=chem), size=2, alpha=0.6)+
+  theme_bw()+
+  geom_hline(yintercept=6.174554, linetype="dashed")+
+  annotate("rect", xmin = 76671497, xmax = 76738667, ymin = 5.509863, ymax = 13.272354, fill = "#980043", alpha = 0.3)+
+  annotate("rect", xmin = 77744894, xmax = 78020182, ymin = 5.509863, ymax = 13.272354, fill = "#980043", alpha = 0.3)+
+  theme(panel.border = element_blank(), axis.text=element_text(colour = "black", size=10), axis.text.x = element_text(angle = 90, hjust = 1), axis.title=element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black", size = 0.2), plot.title = element_text(size = 9))
+
+sesqui_zoom
+
+ggsave("../figures/sesqui_zoom.pdf", plot = sesqui_zoom)
+
+
+```
+
+#Myrcene GWAS
+
+##SNP Heatmap
+```{r mono_heatmap, warning=F, message=F}
+
+#load p-values for guaiol
+snps <- read_csv("../outputs/gwas_pvals_emmax_norm.csv")
+
+myrcene_snps <- dplyr::select(snps, SNP, myrcene_norm)
+colnames(myrcene_snps)[2] <- "pval"
+
+
+#filter for only SNPs on chr 5.
+myrcene_snps <- myrcene_snps[grep("S05_",myrcene_snps$SNP),]
+
+myrcene_snps <- myrcene_snps %>% separate(SNP, 
+                c("chr", "pos","nucleo"))
+myrcene_snps$pos <- as.numeric(myrcene_snps$pos)
+
+
+#filter snps based on position
+myrcene_snps <- myrcene_snps[myrcene_snps$pos <= 2621124,]
+myrcene_snps <- myrcene_snps[myrcene_snps$pos >= 1348048,]
+
+#filter snps based on p-value
+myrcene_snps <- myrcene_snps[myrcene_snps$pval <= 0.0001,]
+
+
+
+#read hapmap used for gwas
+snp<- read_delim("../data/20191209_bedrocan_gen_filtered.hmp.txt", 
+    "\t", escape_double = FALSE, trim_ws = TRUE)
+#filter the hmp file to only have the snps we are interested in plotting
+snp_heatmap <-snp[snp$pos%in%myrcene_snps$pos,]
+hapmap <- snp_heatmap
+
+#the following code was taken from https://github.com/zhenbinHU/Sorghum_SNP_dataset/blob/master/zoon_in_gwas
+#cite it
+# a function convert hapmap to LDheatmap format
+# the input should be hapmap format
+  hapmap[12:dim(hapmap)[2]]<-apply(hapmap[12:dim(hapmap)[2]],2,as.character)
+  snp_dis<-as.numeric(as.character(hapmap$pos))
+  hapmap[hapmap=="AA"]<-"A/A"
+  hapmap[hapmap=="TT"]<-"T/T"
+  hapmap[hapmap=="CC"]<-"C/C"
+  hapmap[hapmap=="GG"]<-"G/G"
+  hapmap[hapmap=="AC"]<-"A/C"
+  hapmap[hapmap=="AG"]<-"A/G"
+  hapmap[hapmap=="AT"]<-"A/T"
+  hapmap[hapmap=="CG"]<-"C/G"
+  hapmap[hapmap=="CT"]<-"C/T"
+  hapmap[hapmap=="GT"]<-"G/T"
+  snp_infor<-hapmap[,1:11]
+  snp_data<-hapmap[,12:dim(hapmap)[2]]
+  snp_data<-t(snp_data)
+  snp_data<-as.data.frame(snp_data)
+  names(snp_data)<-as.character(snp_infor$'rs#')
+  num<-ncol(snp_data)
+  for(i in 1:num){
+    snp_data[,i]<-as.genotype(snp_data[,i])
+  }
+
+
+#make heatmap
+#pdf("../figures/heatmap_mono.pdf",width=6,height=6)
+rgb.palette <- colorRampPalette(rev(brewer.pal(9,"YlGnBu")))
+MyHeatmap<-LDheatmap(snp_data,snp_dis,flip=TRUE,color=rgb.palette(20),title="",name = "myLDgrob")
+#dev.off()
+
+```
+
+##Manhattan Zoom
+
+```{r mono_zoom, message=F, warning=F}
+
+myrcene_snps <- mutate(myrcene_snps, log_p = -log10(pval))
+
+#make zoom in for guaiol with gene annotations
+
+chr5 <- read_excel("../data/mono_genes.xlsx")
+
+mono_zoom <- ggplot(myrcene_snps, aes(x=pos, y=log_p))+
+  geom_point(size=2, alpha=0.6)+
+  theme_bw()+
+  geom_hline(yintercept=6.174554, linetype="dashed")+
+  annotate("rect", xmin = 1277939, xmax = 1341689, ymin = 4.044567, ymax = 8.179957, fill = "#980043", alpha = 0.3)+
+  annotate("rect", xmin = 2015280, xmax = 2037234, ymin = 4.044567, ymax = 8.179957, fill = "#980043", alpha = 0.3)+
+  annotate("rect", xmin = 2394680, xmax = 2529631, ymin = 4.044567, ymax = 8.179957, fill = "#980043", alpha = 0.3)+
+  theme(panel.border = element_blank(), axis.text=element_text(colour = "black", size=10), axis.text.x = element_text(angle = 90, hjust = 1), axis.title=element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black", size = 0.2), plot.title = element_text(size = 9))
+
+mono_zoom
+
+ggsave("../figures/mono_zoom.pdf", plot = mono_zoom)
+
+
+```
+

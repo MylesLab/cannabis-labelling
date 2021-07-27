@@ -1,0 +1,227 @@
+---
+title: "Cannabis Chemical Data Clean-Up"
+author: "Sophie Watts"
+output:
+  html_document:
+    df_print: paged
+    toc: yes
+  html_notebook:
+    code_folding: hide
+    theme: cerulean
+    toc: yes
+    toc_float: yes
+---
+
+# Introduction
+
+This script contains the code written to clean up the chemical dataset for this cannabis project. Terpene and cannabinoid content of cannabis samples was measured using GC-FID. Each strain's label was recorded from the supplier based on levels of reported Indica/Sativa ancestry. The chemical data was published previously (https://www.liebertpub.com/doi/full/10.1089/can.2016.0017).
+
+```{r setup, include=FALSE}
+#load packages
+library("readr")
+library("dplyr")
+library("readxl")
+library("RColorBrewer")
+library("gplots")
+library("viridis")
+library("scales")
+library("tidyverse")
+library("cowplot")
+library("gridExtra")
+library("grid")
+library("knitr") 
+
+theme_set(theme_classic())
+```
+#Chemical data cleaning
+
+There are 48 chemicals in this file, 4 compounds have zeros across all samples (thymoquinone, geraniol, thymol and carvacrol). Methods from Hazekamp 2016 states that there were 44 compounds were identified, they did not include those four compounds listed above.
+
+```{r chem_data, warning=FALSE, message=FALSE}
+
+#load chemical data
+chem_data <- read_excel("../data/170428 Bedrocan_chem_sample mg per g.xlsx")
+
+#load in short names for chemicals
+short_chem_names <- read_csv("../data/short_chem_names.txt", 
+    col_names = FALSE)
+short_chem <- short_chem_names$X1
+
+
+#set colnames to short names.
+colnames(chem_data) <- short_chem
+
+```
+There are two samples (239 and 258) with unreasonable values for CBGM and THC. 239 has a CBGM value of 37.5 mg/g (average is 0.4 mg/g) and 258 has a THC value of 733.5 mg/g (probably a typo: 73.35 mg/g). Change outlier values.
+
+```{r outliers}
+
+#correct outliers
+chem_data[which(chem_data$Sample=="239"), "CBGM"] <- 0.375
+chem_data[which(chem_data$Sample=="258"), "THC"] <- 73.35
+
+```
+In Hazekamp 2016 paper the peak areas for CBN, delta-8-THC, and THC, were combined to one single value for ‘THC total’, therefore we will merge the concentrations for these three compounds together.
+
+```{r thc_total}
+
+#merge delta 8 and CBN with THC
+chem_data <- chem_data %>% mutate(thc_total = THC+d8THC+CBN)
+#remove the CBN, delta-8-THC, and THC columns
+chem_data <- subset(chem_data, select = -c(THC, d8THC, CBN))
+
+#merge limonene and b_phella then delete them.
+chem_data <- chem_data %>% mutate(b_phella_limonene = b_phella + limonene)
+chem_data <- subset(chem_data, select = -c(b_phella, limonene))
+
+#rearrange compounds into the same order as when they were originally loaded.
+chem_data <- chem_data[,c(1:9, 49, 10:46, 48, 47)]
+
+```
+There are four compounds (thymoqui, geraniol, thymol, carvacrol) that have zero for all samples and cineol zero across all samples except for one. We removed all five of these compounds.
+
+```{r remove_zero}
+#remove chemicals.
+chem_data <- chem_data[, colSums(chem_data != 0) > 1] 
+#now 40 chemicals remain
+
+```
+Sample names of a a few samples are mispelled. Rename them with a consist spelling.
+
+```{r rename}
+#Rename samples which have clones to have the same spelling
+chem_data[chem_data$Sample_Name == "Northern lights", "Sample_Name"] <- "Northern Lights"
+chem_data[chem_data$Sample_Name == "Northern Light", "Sample_Name"] <- "Northern Lights"
+
+chem_data[chem_data$Sample_Name == "OG-Kush", "Sample_Name"] <- "OG Kush"
+```
+
+#Sativa and Indica labels
+
+Convert the labels provided in the file (encoded as characters) into numeric values (score of 1-5 from 1 (full sativa) to 5 (full indica)) 
+
+```{r ancestry}
+
+#convert the ancestry values provided in the file (encoded as characters) into numeric values (score of 1-5 from 1 (full sativa) to 5 (full indica)) 
+pheno<-chem_data[, c(4, 1)]
+pheno$Sample<-as.character(pheno$Sample)
+pheno$type=1   
+pheno[pheno$Label=="hs",]$type=2
+pheno[pheno$Label=="h",]$type=3
+pheno[pheno$Label=="hi",]$type=4
+pheno[pheno$Label=="i",]$type=5
+pheno<-pheno[, c(2,3)]
+
+#merge the new scored labels with the chemical data
+pheno$Sample <- as.numeric(pheno$Sample)
+chem_data <- left_join(chem_data, pheno, by = "Sample")
+
+```
+#Total terpene and cannabinoid content {.tabset}
+
+Calculate the total monoterpene, sesquiterpene, cannabinoid and chemical content per samples.
+
+```{r arrrange_columns}
+#re-arrange chemicals into final order
+chem_data <- chem_data[,c("Sample", "Sample_Name", "Source", "Label", "type", "a_pinene", "b_pinene", "myrcene", "a_phella", "d_carene", "ocimene", "g_terpinene", "terpinolene", "linalool", "b_phella_limonene", "b_fenchol", "c_sabinene", "camphor", "borneol", "a_terpineol", "c_bergam", "d_guaiene", "BCP", "a_humulene", "g_cadinene", "eudesma", "tr_BCP", "a_guaiene", "g_selinene", "a_gurjunen", "BCP_oxide", "t_bergam", "tb_farnesene", "aromadendrene", "g_elemene", "guaiol", "g_eudesmol", "b_eudesmol", "a_bisabolol", "thc_total", "CBG", "CBC", "THCV", "CBD", "CBGM")]
+```
+
+<br/>
+
+## Total Chemical Content
+
+```{r chem_total}
+chem_data$chemical_total = rowSums(chem_data[,c(6:45)])
+hist(chem_data$chemical_total, breaks = 100, main = NULL, xlab = "Total Chemical Content (mg/g)")
+```
+
+## Total Monoterpene Content
+
+```{r}
+chem_data$mono_total = rowSums(chem_data[,c(6:20)])
+hist(chem_data$mono_total, breaks = 100, main = NULL, xlab = "Total Monoterpene Content (mg/g)")
+```
+
+## Total Sesquiterpene Content
+
+```{r}
+
+chem_data$sesqui_total = rowSums(chem_data[,c(21:39)])
+hist(chem_data$sesqui_total, breaks = 100, main = NULL, xlab = "Total Sesquiterpene Content (mg/g)")
+
+```
+
+## Total Cannabinoid Content
+
+```{r}
+
+chem_data$canna_total = rowSums(chem_data[,c(40:45)])
+hist(chem_data$canna_total, breaks = 100, main = NULL, xlab = "Total Cannabinoid Content (mg/g)")
+
+```
+
+#Normalization
+
+Normalize chemical data by dividing each chemical measurement by the total chemical content of the samples.
+
+```{r normalize}
+#normalize
+#subset into chemical categories and divide each measurement by the samples total chemical content.
+mono_norm <- select(chem_data, "Sample", "a_pinene":"a_terpineol", "mono_total")
+for (i in 2:16) {
+  mono_norm[i] <- mono_norm[i] / mono_norm[17]
+}
+mono_norm <- select(mono_norm, "Sample": "a_terpineol")
+
+sesqui_norm <- select(chem_data, "Sample", "c_bergam":"a_bisabolol", "sesqui_total")
+for (i in 2:20) {
+  sesqui_norm[i] <- sesqui_norm[i] / sesqui_norm[21]
+}
+sesqui_norm <- select(sesqui_norm, "Sample":"a_bisabolol")
+
+
+canna_norm <- select(chem_data, "Sample", "thc_total":"CBGM", "canna_total")
+for (i in 2:7) {
+  canna_norm[i] <- canna_norm[i] / canna_norm[8]
+}
+canna_norm <- select(canna_norm, "Sample": "CBGM")
+
+#join the normalized tables
+chem_norm <- left_join(mono_norm, sesqui_norm, by = "Sample")
+chem_norm <- left_join(chem_norm, canna_norm, by = "Sample")
+
+#rename colnames
+colnames(chem_norm) <- paste0(colnames(chem_norm), '_norm')
+names(chem_norm)[names(chem_norm) == "Sample_norm"] <- "Sample"
+
+#join normalized chemicals with "chem_data"
+chem_data <- left_join(chem_data, chem_norm, by = "Sample")
+```
+#Final cleaned-up files
+
+Save the chemical file.
+
+```{r save_chem}
+
+#Save full chemical dataset
+#write.csv(chem_data, file = "../outputs/chem_data.csv", row.names = F)
+
+```
+There are `r nrow(chem_data)` samples in the chemical file.
+
+Save a subset of the chemical file that contains only samples with both chemical and genetic data.
+
+```{r save_gen_chem, warning=FALSE, message=FALSE}
+#load samples with genetic data.
+
+gen_samples <- read_table2("../data/20191209_bedrocan_gen_filtered.nosex", 
+                           col_names = FALSE)
+#make vector of samples with genetic and chemical data. There are 137 samples with chemical and genetic data.
+gen_samples <- gen_samples$X1
+#grab rows from chem data that have genetic data.
+gen_chem_data <- subset(chem_data, Sample %in% gen_samples )
+
+#write.csv(gen_chem_data, file = "../outputs/gen_chem_data.csv", row.names = F)
+
+```
+There are `r nrow(gen_chem_data)` samples with with both chemical and genetic data.

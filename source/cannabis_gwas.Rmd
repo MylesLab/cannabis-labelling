@@ -1,0 +1,241 @@
+---
+title: "Cannabis GWAS"
+author: "Sophie Watts"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output:
+  html_notebook:
+    code_folding: hide
+    theme: cerulean
+    toc: true
+    toc_float: true
+---
+
+This script contains the code to run the Multi-Locus Mixed Linear Model by Segura et al. (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3386481/) for the Bedrocan cannabis project.
+
+```{r setup, include=FALSE}
+library("readr")
+library("RColorBrewer")
+library("gplots")
+library("ggplot2")
+library("devtools")
+library("emma")
+library("mlmm")
+library("data.table")
+library("stringr")
+library("qqman")
+library("scales")
+
+
+theme_set(theme_classic())
+
+```
+#Phenotype Data
+```{r pheno, warning=FALSE, message=FALSE}
+
+pheno_dat <- read_csv("../outputs/chem_data.csv")
+
+#rename first column.
+colnames(pheno_dat)[1] <- "FullSampleName"
+
+#select phenos
+pheno_dat <- dplyr::select(pheno_dat, "FullSampleName", "a_pinene":"CBGM_norm")
+
+
+```
+#Genotype Data
+```{r geno, message=FALSE, warning=FALSE}
+
+geno_dat <- read.table("../data/202008011_bedrocan_gen_filtered.raw", header=T)
+sample_order <- geno_dat[,1:2]
+colnames(sample_order)[1] <- "FullSampleName"
+
+rownames(geno_dat) <- geno_dat[,1]
+geno_dat <- geno_dat[,7:ncol(geno_dat)]
+#116,296 SNPs.
+geno_dat <- as.matrix(geno_dat)
+
+#make sure indvs in both the phenotype and genotype file are lined up correctly.
+order <- sample_order$FullSampleName
+pheno_dat <- pheno_dat[match(order, pheno_dat$FullSampleName),]
+
+
+#change to dataframe
+pheno_dat <- as.data.frame(pheno_dat)
+rownames(pheno_dat) <- pheno_dat[,1]
+
+```
+#Kinship
+```{r kinship, message=FALSE, warning=FALSE, eval=FALSE}
+#load kinship matrix
+kinship <- read_delim("../data/2020080607_bedro_kinship.txt", 
+                      "\t", escape_double = FALSE, col_names = FALSE, 
+                      trim_ws = TRUE)
+kinship <- as.data.frame(kinship)
+rownames(kinship) <- kinship[,1]
+kinship <- kinship[,2:ncol(kinship)]
+colnames(kinship) <- rownames(kinship)
+kinship <- as.matrix(kinship)
+
+```
+
+#Chromosome Renumbering
+Load the map file with SNP positions and renumber the chromosomes based on the new numbering system (https://www.ncbi.nlm.nih.gov/assembly/GCF_900626175.2)
+
+```{r chr_renumber, message=FALSE, warning=FALSE, eval=FALSE}
+
+#load snp positions and chromosomes
+map <- read_delim("../data/20191209_bedrocan_gen_filtered.map", 
+                  "\t", escape_double = FALSE, col_names = FALSE, 
+                  trim_ws = TRUE)
+
+colnames(map) <- c("Chr", "SNP", "X", "Pos")
+map <- map %>% dplyr::select(SNP, Chr, Pos)
+
+#Rename the SNP names to match the SNP names in the geno_dat file (the geno_dat SNPs have the genotype at the end)
+map <- map %>% dplyr::mutate(SNP=colnames(geno_dat))
+
+#This below section is a sanity check to make sure the geno_dat SNP names perfect match up with the SNP names from the original map file.
+#map <- map %>% dplyr::mutate(snp=colnames(geno_dat))
+#map <- map %>% tidyr::separate(snp, 
+                #c("c", "loc","nucleo"))
+#map <- map %>% tidyr::separate(SNP, 
+                #c("a", "b"))
+#do the snp positions match:
+#table(map$a == map$c)
+#table(map$b == map$loc)
+#yes they do!
+
+#re-number the chromosome acording to the NCBI comments from April 2020:
+#new numbers - old numbers, as follows:
+#1-2
+#2-6
+#3-3
+#4-4
+#5-5
+#6-8
+#7-9
+#8-10
+#9-7
+#10-1
+
+#make new column with new chr numbers
+map["new_chr"] <- "NA"
+map$new_chr <- as.numeric(as.character(map$new_chr))
+
+#rename chr 2 to chr 1
+map[which(map$Chr==2), "new_chr"] <- 1
+
+#rename chr 6 to chr 2
+map[which(map$Chr==6), "new_chr"] <- 2
+
+#rename chr 8 to chr 6
+map[which(map$Chr==8), "new_chr"] <- 6
+
+#rename chr 9 to chr 7
+map[which(map$Chr==9), "new_chr"] <- 7
+
+#rename chr 10 to chr 8
+map[which(map$Chr==10), "new_chr"] <- 8
+
+#remane chr 7 to chr 9
+map[which(map$Chr==7), "new_chr"] <- 9
+
+#rename chr 1 to chr 10
+map[which(map$Chr==1), "new_chr"] <- 10
+
+#3-3
+map[which(map$Chr==3), "new_chr"] <- 3
+
+#4-4
+map[which(map$Chr==4), "new_chr"] <- 4
+
+#5-5
+map[which(map$Chr==5), "new_chr"] <- 5
+
+#11 - 11
+map[which(map$Chr==11), "new_chr"] <- 11
+
+map$new_chr <- as.numeric(as.character(map$new_chr))
+
+#delete the Chr column then rename new_chr to Chr
+map <- map %>% dplyr::select("SNP", "new_chr", "Pos")
+names(map)[names(map) == "new_chr"] <- "Chr"
+
+
+```
+
+#MLMM GWAS
+
+```{r mlmm, message=FALSE, warning=FALSE, eval=FALSE}
+
+#select the phenotypes of interest
+pheno <- dplyr::select(pheno_dat, "a_pinene":"CBGM")
+
+#load trait names for the loop
+trait_names <- colnames(pheno)
+
+test_emmax = data.frame(SNP = map$SNP)
+test_mlmm = data.frame(SNP = map$SNP)
+
+
+pdf(file = "../figures/gwas/mlmm_results.pdf", width = 11, height = 8.5)
+layout(matrix(1:9, 3, 3, byrow = T))
+for (i in 1:length(trait_names)) {
+  loop_output <- mlmm(Y=pheno[,trait_names[i]], X=geno_dat, K=kinship,
+                      nbchunks=2, maxsteps=10)
+  plot_fwd_GWAS(loop_output,1,map,1,main=paste(trait_names[i], " (standard MLM)", sep = ""), abline(h=(-log10(0.05/74735)), col="black", lty=2))
+  loop_pvals <- loop_output[["pval_step"]][[1]][["out"]]
+  colnames(loop_pvals)[2] <- trait_names[i]
+  test_emmax = dplyr::left_join(test_emmax, loop_pvals, by = "SNP")
+  mlmm_pvals <- loop_output[["opt_extBIC"]][["out"]]
+  colnames(mlmm_pvals)[2] <- trait_names[i]
+  test_mlmm = dplyr::left_join(test_mlmm, mlmm_pvals, by = "SNP")
+  qq(loop_pvals[,2], main = paste(trait_names[i], " QQ plot (standard MLM)", sep = ""))
+  var <- as.data.frame(loop_output[["RSSout"]])
+  write.table(var, file = paste("../outputs/test_r2/", trait_names[i], ".csv", sep = ""), quote = F, sep = ",", row.names = F)
+  plot_opt_GWAS(loop_output,'extBIC',map,1,main=paste(trait_names[i], " (optimal MLMM)", sep = ""), abline(h=(-log10(0.05/74735)), col="black", lty=2))
+}
+dev.off()
+
+#write.table(test_emmax, file = "../outputs/gwas_pvals_emmax.csv", quote = F, sep = ",", row.names = F)
+#write.table(test_mlmm, file = "../outputs/gwas_pvals_mlmm.csv", quote = F, sep = ",", row.names = F)
+
+```
+
+#MLMM GWAS for normalized phenotypes
+
+```{r mlmm_norm, message=FALSE, warning=FALSE, eval=FALSE}
+#select the phenotypes of interest
+pheno <- dplyr::select(pheno_dat, "a_pinene_norm":"CBGM_norm")
+
+#load trait names for the loop
+trait_names <- colnames(pheno)
+
+final_emmax = data.frame(SNP = map$SNP)
+final_mlmm = data.frame(SNP = map$SNP)
+
+
+pdf(file = "../figures/gwas/mlmm_results_norm.pdf", width = 11, height = 8.5)
+layout(matrix(1:9, 3, 3, byrow = T))
+for (i in 1:length(trait_names)) {
+  loop_output <- mlmm(Y=pheno[,trait_names[i]], X=geno_dat, K=kinship,
+                      nbchunks=2, maxsteps=10)
+  plot_fwd_GWAS(loop_output,1,map,1,main=paste(trait_names[i], " (standard MLM)", sep = ""), abline(h=(-log10(0.05/74735)), col="black", lty=2))
+  loop_pvals <- loop_output[["pval_step"]][[1]][["out"]]
+  colnames(loop_pvals)[2] <- trait_names[i]
+  final_emmax = dplyr::left_join(final_emmax, loop_pvals, by = "SNP")
+  mlmm_pvals <- loop_output[["opt_extBIC"]][["out"]]
+  colnames(mlmm_pvals)[2] <- trait_names[i]
+  final_mlmm = dplyr::left_join(final_mlmm, mlmm_pvals, by = "SNP")
+  qq(loop_pvals[,2], main = paste(trait_names[i], " QQ plot (standard MLM)", sep = ""))
+  var <- as.data.frame(loop_output[["RSSout"]])
+  write.table(var, file = paste("../outputs/snp_r2_norm/", trait_names[i], ".csv", sep = ""), quote = F, sep = ",", row.names = F)
+  plot_opt_GWAS(loop_output,'extBIC',map,1,main=paste(trait_names[i], " (optimal MLMM)", sep = ""), abline(h=(-log10(0.05/74735)), col="black", lty=2))
+}
+dev.off()
+gwas_pvals_mlmm_norm <- read_csv("~/Documents/myles_lab/cannabis/cannabis_git/outputs/gwas_pvals_mlmm_norm.csv")
+#write.table(final_emmax, file = "../outputs/gwas_pvals_emmax_norm.csv", quote = F, sep = ",", row.names = F)
+#write.table(final_mlmm, file = "../outputs/gwas_pvals_mlmm_norm.csv", quote = F, sep = ",", row.names = F)
+
+
+```

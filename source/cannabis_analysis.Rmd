@@ -1,0 +1,303 @@
+---
+title: "Cannabis Data Analysis"
+author: "Sophie Watts"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output:
+  html_document:
+    df_print: paged
+    toc: yes
+  html_notebook:
+    code_folding: hide
+    theme: cerulean
+    toc: true
+    toc_float: true
+---
+# Introduction
+
+This project involved the use of Genotyping-by-Sequencing data to evaluate cannabis ancestry, terpene and cannabinoid content of cannabis samples from the Netherlands. GBS data was generated from cannabis samples provided by Bedrocan. Here we aligned the GBS data to a new reference genome (CBDRx) and analyses below are based on a new SNP set derived from the alignment to this new reference genome. The chemical data was published previously (https://www.liebertpub.com/doi/full/10.1089/can.2016.0017) and was cleaned-up in the "Cannabis Chemical Data Clean-Up".
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+
+#load packages
+library("readr")
+library("dplyr")
+library("RColorBrewer")
+library("gplots")
+library("viridis")
+library("scales")
+library("tidyverse")
+library("cowplot")
+library("gridExtra")
+library("grid")
+library("ggplot2")
+library("rstatix")
+library("ggpubr")
+library("kableExtra")
+library("gdtools")
+library("car")
+library("patchwork")
+
+theme_set(theme_classic())
+          
+```
+
+#Principal Components Analysis
+##Chemical PCA
+
+```{r chem_pca, warning=FALSE, message=FALSE}
+
+#Run chemical pca
+chem_data <- read_csv("../outputs/chem_data.csv")
+
+chem_data4pca = chem_data[, -c(1:5, 46:89)]
+pc_chem <- prcomp(chem_data4pca, scale=T)
+chem_eig <- pc_chem$sdev^2 #eigen values
+
+#look at PCs loadings
+loadings <- pc_chem$rotation
+
+pc_chem_load<-as.data.frame(pc_chem$x[,1:10])
+pc_chem_load<-cbind(chem_data[, c(1, 5)], pc_chem_load)
+#save(pc_chem_load, file = "../outputs/pc_chem_load.R")
+pc_chem_load$type<-as.factor(pc_chem_load$type)
+
+chem_pca <- ggplot(pc_chem_load, aes(x=PC1, y=PC2, color=type))+
+  geom_point(size=3, stroke=0, alpha=0.7)+
+  theme_bw()+
+  coord_fixed()+
+  scale_color_manual(values = c("#feb24c", "#fd8d3c","#fc4e2a","#bd0026", "#800026"))+
+  labs(x=paste0("PC1 (",round(chem_eig[1]/sum(chem_eig)*100,2),"%)"), y=paste0("PC2 (",round(chem_eig[2]/sum(chem_eig)*100,2),"%)"))+
+  theme(panel.border = element_blank(), axis.text=element_text(colour = "black", size=10), axis.title=element_text(size = 10, face = "bold"), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black", size = 0.2), plot.title = element_text(size = 9))
+#ggsave("../figures/chemical_pca.pdf", plot = chem_pca)
+
+chem_pca
+
+#Are labels significantly different along PC1 and PC2?
+pc_labels_chem <- select(pc_chem_load, Sample, type, PC1, PC2)
+
+#Are PC1 and PC2 correlated with labels/ancestry.
+pc_labels_chem$type <- as.numeric(pc_labels_chem$type)
+summary(lm(PC1 ~ type, data = pc_labels_chem))
+summary(lm(PC2 ~ type, data = pc_labels_chem))
+
+
+
+```
+
+##Genetic PCA
+The SNP set was first reduced in PLINK to only contain SNPs on anchored chromosomes (SNPs on contigs were removed), this results in 115,039 SNPs remaining. The SNP set was then LD pruned in plink using: --indep-pairwise 10 3 0.5, this left 80,939 SNPs for the genetic PCA.
+
+```{r gen_pca, warning=FALSE, message=FALSE}
+#Run genetic PCA
+
+#load in raw file
+geno_dat <- read_delim("../data/20191209_bedrocan_gen_filtered_pruned.raw", " ", escape_double = FALSE, trim_ws = TRUE)
+
+geno_dat <- as.data.frame(geno_dat)
+
+#rename first column as Taxa
+colnames(geno_dat)[1]<-"Taxa"
+geno_dat$Taxa <- as.character(geno_dat$Taxa)
+
+#drop columns 2-6
+geno_dat <- geno_dat[,-c(2:6)]
+
+#get list of sample names and their labels
+gen_chem_data <- read_csv("../outputs/gen_chem_data.csv")
+pheno <- select(gen_chem_data, Sample, type)
+
+#PCA
+geno_dat_4pca = geno_dat[, -1]
+pc_geno<-prcomp(geno_dat_4pca, scale = T)
+geno_eig <- pc_geno$sdev^2 #eigen values
+
+
+pc_geno_load<-as.data.frame(pc_geno$x[,1:10]) #principal components, loadings by sample
+pc_geno_load<-cbind(geno_dat[, 1], pc_geno_load)
+colnames(pc_geno_load)[1]<-"Taxa"
+pc_geno_load$Taxa <- as.numeric(as.character(pc_geno_load$Taxa))
+
+#combine PC dataframe and label dataframe.
+pc_geno_load<-dplyr::left_join(pc_geno_load, pheno, by = c("Taxa" = "Sample"))
+#save(pc_geno_load, file = "../outputs/pc_geno_load.R")
+pc_geno_load$type<-as.factor(pc_geno_load$type)
+
+geno_pca <- ggplot(pc_geno_load, aes(x=PC1, y=PC2, color=type))+
+  geom_point(size=3, stroke=0, alpha=0.70)+
+  theme_bw()+
+  coord_fixed()+
+  scale_color_manual(values = c("#feb24c", "#fd8d3c","#fc4e2a","#bd0026", "#800026"))+
+  labs(x=paste0("PC1 (",round(geno_eig[1]/sum(geno_eig)*100,2),"%)"), y=paste0("PC2 (",round(geno_eig[2]/sum(geno_eig)*100,2),"%)"))+
+  theme(panel.border = element_blank(), axis.text=element_text(colour = "black", size=10), axis.title=element_text(size = 10, face = "bold"), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black", size = 0.2), plot.title = element_text(size = 9))+
+  scale_y_continuous(breaks = c(-100, -50, 0, 50, 100))
+#ggsave("../figures/genetic_pca.pdf", plot = geno_pca)
+
+geno_pca
+
+#Are PC1 and PC2 correlated with labels/ancestry.
+pc_labels <- select(pc_geno_load, Taxa, PC1, PC2)
+pc_labels$Taxa <- as.numeric(as.character(pc_labels$Taxa))
+labels <- select(gen_chem_data, Sample, type)
+pc_labels <- full_join(labels, pc_labels, by = c("Sample" = "Taxa"))
+pc_labels$type <- as.numeric(pc_labels$type)
+
+summary(lm(PC1 ~ type, data = pc_labels))
+summary(lm(PC2 ~ type, data = pc_labels))
+
+```
+#Variance explained by PCs
+Predict labeled ancestry by using chemical/genetic PCs in a linear model as a way of determining which axes of variation explain the largest amount of variaiton in labelling.
+
+```{r cumulative_pca, warning=FALSE, message=FALSE}
+
+#genetic PCA
+load("../outputs/pc_geno_load.R")
+pc_geno_load$type <- as.numeric(pc_geno_load$type)
+gen.cum.lab <- data.frame()
+
+gen.cum.lab<-rbind(gen.cum.lab, summary(lm(type ~ PC1, data=pc_geno_load))$adj.r.squared)
+gen.cum.lab<-rbind(gen.cum.lab, summary(lm(type ~ PC1 + PC2, data=pc_geno_load))$adj.r.squared)
+gen.cum.lab<-rbind(gen.cum.lab, summary(lm(type ~ PC1 + PC2 + PC3 , data=pc_geno_load))$adj.r.squared)
+gen.cum.lab<-rbind(gen.cum.lab, summary(lm(type ~ PC1 + PC2 + PC3 + PC4 , data=pc_geno_load))$adj.r.squared)
+gen.cum.lab<-rbind(gen.cum.lab, summary(lm(type ~ PC1 + PC2 + PC3 + PC4 + PC5 , data=pc_geno_load))$adj.r.squared)
+gen.cum.lab<-rbind(gen.cum.lab, summary(lm(type ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6 , data=pc_geno_load))$adj.r.squared)
+gen.cum.lab<-rbind(gen.cum.lab, summary(lm(type ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 , data=pc_geno_load))$adj.r.squared)
+gen.cum.lab<-rbind(gen.cum.lab, summary(lm(type ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8, data=pc_geno_load))$adj.r.squared)
+gen.cum.lab<-rbind(gen.cum.lab, summary(lm(type ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8 + PC9, data=pc_geno_load))$adj.r.squared)
+gen.cum.lab<-rbind(gen.cum.lab, summary(lm(type ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8 + PC9 + PC10, data=pc_geno_load))$adj.r.squared)
+colnames(gen.cum.lab)<-"rsq"
+gen.cum.lab$PC=c(1:10)
+
+#chem PCA
+load("../outputs/pc_chem_load.R")
+pc_chem_load$type<-as.numeric(pc_chem_load$type)
+chem.cum.lab<-data.frame()
+
+chem.cum.lab<-rbind(chem.cum.lab, summary(lm(type ~ PC1, data=pc_chem_load))$adj.r.squared)
+chem.cum.lab<-rbind(chem.cum.lab, summary(lm(type ~ PC1 + PC2, data=pc_chem_load))$adj.r.squared)
+chem.cum.lab<-rbind(chem.cum.lab, summary(lm(type ~ PC1 + PC2 + PC3 , data=pc_chem_load))$adj.r.squared)
+chem.cum.lab<-rbind(chem.cum.lab, summary(lm(type ~ PC1 + PC2 + PC3 + PC4 , data=pc_chem_load))$adj.r.squared)
+chem.cum.lab<-rbind(chem.cum.lab, summary(lm(type ~ PC1 + PC2 + PC3 + PC4 + PC5 , data=pc_chem_load))$adj.r.squared)
+chem.cum.lab<-rbind(chem.cum.lab, summary(lm(type ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6 , data=pc_chem_load))$adj.r.squared)
+chem.cum.lab<-rbind(chem.cum.lab, summary(lm(type ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 , data=pc_chem_load))$adj.r.squared)
+chem.cum.lab<-rbind(chem.cum.lab, summary(lm(type ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8, data=pc_chem_load))$adj.r.squared)
+chem.cum.lab<-rbind(chem.cum.lab, summary(lm(type ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8 + PC9, data=pc_chem_load))$adj.r.squared)
+chem.cum.lab<-rbind(chem.cum.lab, summary(lm(type ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8 + PC9 + PC10, data=pc_chem_load))$adj.r.squared)
+colnames(chem.cum.lab)<-"rsq"
+chem.cum.lab$PC=c(1:10)
+
+#rename rsq in chem
+colnames(chem.cum.lab)[1]<-"rsqchem"
+colnames(gen.cum.lab)[1]<-"rsqgen"
+
+#join tables
+pcs_var <- full_join(chem.cum.lab, gen.cum.lab, by = "PC")
+#mutate rsq to be percents.
+pcs_var <- mutate(pcs_var, perchem = rsqchem*100)
+pcs_var <- mutate(pcs_var, pergen = rsqgen*100)
+
+
+#include both the chemical and genetic PCs into one linear model to see how much both explain in variation in labelling.
+
+gen_chem <- left_join(pc_geno_load, pc_chem_load, by = c("Taxa" = "Sample"))
+
+gen_chem <- select(gen_chem, -"type.y")
+
+summary(lm(type.x ~ PC1.x + PC2.x + PC3.x + PC4.x + PC5.x + PC6.x + PC7.x + PC8.x + PC9.x + PC10.x + PC1.y + PC2.y + PC3.y + PC4.y + PC5.y + PC6.y + PC7.y + PC8.y + PC9.y + PC10.y, data = gen_chem))
+
+#combine both the chemical and genetic PCs.
+combined<-data.frame()
+
+combined<-rbind(combined, summary(lm(type.x ~ PC1.x + PC1.y, data=gen_chem))$adj.r.squared)
+combined<-rbind(combined, summary(lm(type.x ~ PC1.x + PC1.y + PC2.x + PC2.y, data=gen_chem))$adj.r.squared)
+combined<-rbind(combined, summary(lm(type.x ~ PC1.x + PC1.y + PC2.x + PC2.y + PC3.x + PC3.y, data=gen_chem))$adj.r.squared)
+combined<-rbind(combined, summary(lm(type.x ~ PC1.x + PC1.y + PC2.x + PC2.y + PC3.x + PC3.y + PC4.x + PC4.y, data=gen_chem))$adj.r.squared)
+combined<-rbind(combined, summary(lm(type.x ~ PC1.x + PC1.y + PC2.x + PC2.y + PC3.x + PC3.y + PC4.x + PC4.y + PC5.x + PC5.y, data=gen_chem))$adj.r.squared)
+combined<-rbind(combined, summary(lm(type.x ~ PC1.x + PC1.y + PC2.x + PC2.y + PC3.x + PC3.y + PC4.x + PC4.y + PC5.x + PC5.y + PC6.x + PC6.y, data=gen_chem))$adj.r.squared)
+combined<-rbind(combined, summary(lm(type.x ~ PC1.x + PC1.y + PC2.x + PC2.y + PC3.x + PC3.y + PC4.x + PC4.y + PC5.x + PC5.y + PC6.x + PC6.y + PC7.x + PC7.y, data=gen_chem))$adj.r.squared)
+combined<-rbind(combined, summary(lm(type.x ~ PC1.x + PC1.y + PC2.x + PC2.y + PC3.x + PC3.y + PC4.x + PC4.y + PC5.x + PC5.y + PC6.x + PC6.y + PC7.x + PC7.y + PC8.x + PC8.y, data=gen_chem))$adj.r.squared)
+combined<-rbind(combined, summary(lm(type.x ~ PC1.x + PC1.y + PC2.x + PC2.y + PC3.x + PC3.y + PC4.x + PC4.y + PC5.x + PC5.y + PC6.x + PC6.y + PC7.x + PC7.y + PC8.x + PC8.y + PC9.x + PC9.y, data=gen_chem))$adj.r.squared)
+combined<-rbind(combined, summary(lm(type.x ~ PC1.x + PC1.y + PC2.x + PC2.y + PC3.x + PC3.y + PC4.x + PC4.y + PC5.x + PC5.y + PC6.x + PC6.y + PC7.x + PC7.y + PC8.x + PC8.y + PC9.x + PC9.y + PC10.x + PC10.y, data=gen_chem))$adj.r.squared)
+colnames(combined)<-"rsq"
+combined$PC=c(1:10)
+
+colnames(combined)[1]<-"rsqgen_chem"
+combined$PC=c(1:10)
+pcs_var <- full_join(pcs_var, combined, by = "PC")
+pcs_var <- mutate(pcs_var, pergen_chem = rsqgen_chem*100)
+
+#select columns we need
+pcs_var <- pcs_var %>% select(PC, perchem, pergen, pergen_chem) %>% add_row(PC = 0, perchem = 0, pergen = 0, pergen_chem = 0, .before = 1)
+
+
+cumulative_pcs <- ggplot(pcs_var, aes(x = PC)) +
+  theme_bw()+
+  theme(panel.border = element_blank(), axis.text=element_text(colour = "black", size=10), axis.title=element_text(size = 10, face = "bold"), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black", size = 0.2), plot.title = element_text(size = 9))+
+  geom_line(aes(y = perchem), colour="#41ab5d") +
+  geom_point(aes(y = perchem), colour="#41ab5d") +
+  geom_line(aes(y = pergen), colour = "#225ea8") +
+  geom_point(aes(y = pergen), colour = "#225ea8") + 
+  geom_line(aes(y = pergen_chem), colour = "#e7298a") +
+  geom_point(aes(y = pergen_chem), colour = "#e7298a") + 
+  ylab(label="% Variance of labelling explained") + 
+  xlab("PC")+
+  scale_x_continuous(breaks = c(0,1,2,3,4,5,6,7,8,9,10), expand = c(0,0), limits = c(0,10.5))+
+  scale_y_continuous(expand = c(0, 0), limits = c(0,50))
+ggsave("../figures/cumulative_pcs_three.pdf", plot = cumulative_pcs)
+
+cumulative_pcs
+
+```
+
+#Correlation of chemicals with label type
+Run correlations that calculate the proportion of variance explained by ancestry for each chemical - there are 40 chemicals and 4 chemical class totals overall and p_cor is Bonferroni-adjusted for multiple comparisons (44 comparisons).
+
+```{r chem_cor, warning=FALSE, message=FALSE}
+#load full chemical dataset.
+chem_data <- read_csv("../outputs/chem_data.csv")
+#select the normlized chemicals (40)
+chem_loop <- select(chem_data, c("type":"canna_total"))
+chem_loop <- as.matrix(chem_loop)
+
+rsquare = estimate = pvals = c()
+for (i in 2:ncol(chem_loop)) {
+  chem_cor <- cor.test(chem_loop[,1], chem_loop[,i], method = "pearson")
+  estimate[i] = chem_cor$estimate
+  rsquare[i] = chem_cor$estimate^2
+  pvals[i] = chem_cor$p.val
+}
+pvals_cor = signif(pvals*44, 3) #44 comparisons to multiple test correct for.
+chem_cor_results = cbind(colnames(chem_loop), estimate, rsquare, pvals_cor)
+chem_cor_results = chem_cor_results[-1,]
+chem_cor_results <- as.data.frame(chem_cor_results)
+chem_cor_results$pvals_cor <- as.numeric(as.character(chem_cor_results$pvals_cor))
+chem_cor_results$rsquare <- as.numeric(as.character(chem_cor_results$rsquare))
+chem_cor_results$estimate <- as.numeric(as.character(chem_cor_results$estimate))
+
+chem_cor_results$rsquare <- round(chem_cor_results$rsquare, 3)
+chem_cor_results$estimate <- round(chem_cor_results$estimate, 3)
+
+
+chem_cor_results <- chem_cor_results %>% rename(chemicals = V1)
+
+write.table(chem_cor_results, file = "../outputs/chem_lm_tab.txt", quote=F, sep="\t", row.names = F)
+
+chem_cor_results$rsquare <- as.numeric(as.character(chem_cor_results$rsquare))
+
+chem_cor_results$chemicals <- factor(chem_cor_results$chemicals, levels=unique(chem_cor_results$chemicals))
+
+#make figure of plot for r^2 values for each chemical.
+chem_cor <- ggplot(chem_cor_results, aes(chemicals, rsquare))+
+  geom_point(size=2, alpha=0.7, colour = "darkgrey")+
+  theme_bw()+
+  labs(x="chemical", y="r2")+
+  theme(panel.border = element_blank(), axis.text=element_text(colour = "black", size=10), axis.text.x = element_text(angle = 90, hjust = 1), axis.title=element_text(size = 10, face = "bold"), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black", size = 0.2), plot.title = element_text(size = 9))
+ggsave("chem_correlations.pdf", plot = chem_cor, path = "../figures", device = "pdf")
+
+chem_cor
+
+
+```
+

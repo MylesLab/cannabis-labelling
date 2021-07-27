@@ -1,0 +1,396 @@
+---
+title: "Bedrocan Cannabis Supplemental Data Analysis"
+author: "Sophie Watts"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output:
+  html_notebook:
+    code_folding: hide
+    theme: cerulean
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+
+
+#load packages
+library("readr")
+library("dplyr")
+library("RColorBrewer")
+library("gplots")
+library("viridis")
+library("scales")
+library("tidyverse")
+library("cowplot")
+library("gridExtra")
+library("grid")
+library("ggplot2")
+library("rstatix")
+library("vegan")
+library("patchwork")
+
+theme_set(theme_classic())
+
+```
+#Boxplots of chemical concentration with label type
+```{r}
+
+chem_data <- read_csv("../outputs/chem_data.csv")
+
+chem_data$type <- as.factor(chem_data$type)
+
+#select phenos
+chem_data <- chem_data %>% select(type:canna_total)
+
+p <- list()
+for (i in 2:ncol(chem_data)) {
+  chemical_dat <- chem_data[, c(1,i)]
+  name <- colnames(chemical_dat)[2]
+  colnames(chemical_dat)[2] <- "chem"
+  p[[i]] <-ggplot(chemical_dat, aes(x=type, y=chem, fill=type)) + 
+  geom_boxplot(alpha=0.7)+
+  ylab(paste(name, " (mg/g)"))+
+  xlab("Sativa-Indica labelling scale")+
+  scale_fill_manual(values = c("#feb24c", "#fd8d3c","#fc4e2a","#bd0026", "#800026"))+
+  theme(legend.position="none")
+}
+
+p <-p[-1]
+multi_page <- ggarrange(plotlist = p , nrow = 4, ncol = 2)
+multi_page[[1]]
+ggexport(multi_page, filename = "../figures/chem_label_boxplots.pdf")
+
+```
+
+#Mantel test.
+
+```{r mantel, warning=FALSE, message=FALSE}
+#compare the matrices of genetic distances vs. chemical distances using a mantel test.
+
+#load 1-IBS matrix that was made with PLINK
+ibs_gen <- read_delim("../data/20191209_bedrocan_gen_filtered.mdist", 
+                                "\t", escape_double = FALSE, col_names = FALSE, 
+                                trim_ws = TRUE)
+
+
+#load sample names for mdist file
+ibs_gen_samples <- read_delim("../data/20191209_bedrocan_gen_filtered.mdist.id", 
+                                      "\t", escape_double = FALSE, col_names = FALSE, 
+                                      trim_ws = TRUE)
+
+#name the col and rows with sample names
+rownames(ibs_gen) <- ibs_gen_samples$X1
+colnames(ibs_gen) <- ibs_gen_samples$X2
+
+#load chemical data
+gen_chem_data <- read_csv("../outputs/gen_chem_data.csv")
+
+#make vector of ibs_gen_samples
+samples_vec <- ibs_gen_samples$X1
+
+#rearrange gen_chem_data by sample order from samples_vec
+gen_chem_data <- gen_chem_data %>% slice(match(samples_vec, Sample))
+chem_mat_euclid <- gen_chem_data[,6:45]
+#calculate euclidean distances between all samples and make matrix
+eucl.chem<-as.matrix(dist(chem_mat_euclid, method="euclidean"))
+#rename col and rownames with sample names.
+rownames(eucl.chem)<-gen_chem_data$Sample
+colnames(eucl.chem)<-gen_chem_data$Sample
+
+ibs_gen <- as.matrix(ibs_gen)
+
+#perform mantel test.
+mantel(ibs_gen, eucl.chem)
+
+gen_vec <- as.vector(ibs_gen[upper.tri(ibs_gen)])
+chem_vec <- as.vector(eucl.chem[upper.tri(eucl.chem)])
+
+#merge both distance vectors
+distances <- data.frame(gen_vec, chem_vec, stringsAsFactors=FALSE)
+
+#plot
+mantel <- ggplot(distances, aes(gen_vec, chem_vec))+
+  geom_point(size=1, alpha=0.7, colour = "darkgrey")+
+  theme_bw()+
+  labs(x="Genetic distance", y="Chemical distance")+
+  theme(panel.border = element_blank(), axis.text=element_text(colour = "black", size=10), axis.title=element_text(size = 10, face = "bold"), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black", size = 0.2), plot.title = element_text(size = 9))+
+  ggtitle("mantel r = 0.21 p-value = 1x10-3")
+#ggsave("../figures/mantel.pdf", plot = mantel)
+
+mantel
+
+```
+
+#Chemical distance between clones.
+
+```{r chem_clones, message=FALSE, warning=FALSE}
+
+#Chemical distance between samples.
+chem_data <- read_csv("../outputs/chem_data.csv")
+
+#add an "s" in front of sample name to make it easier ot code later.
+chem_data$Sample <- sub("^", "s", chem_data$Sample)
+#Reduce chem data down to only the chemical values
+chem_mat <- chem_data[,6:45]
+#calculate euclidean distances between all samples and make matrix
+chem_eucl <- as.matrix(dist(chem_mat, method="euclidean"))
+#rename col and rownames with sample names.
+rownames(chem_eucl)<-chem_data$Sample
+colnames(chem_eucl)<-chem_data$Sample
+
+#make vector of euclidean distances for all the comparisons
+chem_dist <- as.vector(chem_eucl[upper.tri(chem_eucl)])
+
+#OG Kush
+og_kush_vec <- chem_eucl["s10", "s325"]
+#104.1071
+
+#Enemy of state
+enemy_vec <- chem_eucl["s21", "s323"]
+#47.0522
+
+#Haze
+haze_vec <- chem_eucl["s24", "s25"]
+#9.786631
+
+#Kush
+kush_vec <- chem_eucl["s28", "s324"]
+#12.87174
+
+#Lemon Haze
+chem_eucl["s5", "s7"]
+lemon_vec <- chem_eucl["s5", "s7"]
+#49.40912
+
+
+#santa maria
+chem_eucl["s11", "s328"]
+santa_vec <- chem_eucl["s11", "s328"]
+#20.07088
+
+#amnesia matrix of distance between pairs
+amnesia <- chem_eucl[c("s4", "s6", "s27", "s29", "s35", "s327", "s329", "s330"), c("s4", "s6", "s27", "s29", "s35", "s327", "s329", "s330")]
+#make a vector of the amnesia matrix values
+amnesia_vec <- as.vector(amnesia[upper.tri(amnesia)])
+#calculate the median
+median(amnesia_vec)
+#median dist: 32.30729
+
+#amnesia haze
+amnesia_haze <- chem_eucl[c("s2", "s18", "s19", "s20", "s26", "s30", "s31", "s32", "s34"),c("s2", "s18", "s19", "s20", "s26", "s30", "s31", "s32", "s34")]
+amnesia_haze_vec <- as.vector(amnesia_haze[upper.tri(amnesia_haze)])
+median(amnesia_haze_vec)
+#median 18.70257
+
+#northern lights
+northern <- chem_eucl[c("s23", "s33", "s320", "s1", "s3", "s8"), c("s23", "s33", "s320", "s1", "s3", "s8")]
+northern_vec <- as.vector(northern[upper.tri(northern)])
+median(northern_vec)
+#median 43.47785
+
+#turn into data frame
+chem_dist <- as.data.frame(chem_dist) 
+
+#make plot with median distance amongst the same clones
+
+chem_clones <- ggplot(data=chem_dist, aes(chem_dist))+
+  geom_histogram(bins=100, size = 0.8)+
+  geom_vline(xintercept=49.40912, color="#F0E442", alpha=0.7)+ #lemon haze,yellow 
+  geom_vline(xintercept=43.47785, color="#E69F00", alpha=0.7)+ #northern lights, light orange
+  geom_vline(xintercept=20.07088, color="#56B4E9", alpha=0.7)+ #santa maria, light blue
+  geom_vline(xintercept=18.70257, color="#009E73", alpha=0.7)+ #amnesia haze, dark green
+  geom_vline(xintercept=32.30729, color="#999999", alpha=0.7)+ #amnesia,grey 
+  geom_vline(xintercept=47.0522, color="#0072B2", alpha=0.7)+ #enemy of state, dark blue
+  geom_vline(xintercept=12.87174, color="#D55E00", alpha=0.7)+ #kush, orange
+  geom_vline(xintercept=104.1071, color="#CC79A7", alpha=0.7)+ #OG kush, pink
+  geom_vline(xintercept=9.786631, color="#7570B3", alpha=0.7)+ #haze, purple
+  labs(x="Euclidean distance", y="Count")
+
+clones <- c(santa_vec, og_kush_vec, northern_vec, lemon_vec, kush_vec, haze_vec, enemy_vec, amnesia_haze_vec, amnesia_vec)
+
+
+```
+
+There are `r sum(chem_dist$chem_dist < 2.561392)`  pairwise comparisons between two samples with different labels that are more chemically similar to one another than any of the clones.
+
+#Genetic distance between clones.
+
+```{r gen_clones, message=FALSE, warning=FALSE}
+
+#make a histogram showing the distribtions of genetic distances, highlight distances between clones with the same name.
+gen_chem_data <- read_csv("../outputs/gen_chem_data.csv")
+bedro_IBS <- read_table2("../data/20191209_bedrocan_gen_filtered.genome")
+#The DST column contains the IBS value for the two samples being compared, we will calculate the inverse identity by state but doing 1-DST and we will label the new column inv_ibs.
+bedro_IBS <- bedro_IBS %>% mutate(inv_ibs = 1-DST)
+bedro_IBS <- bedro_IBS %>% select(FID1, FID2, inv_ibs)
+
+#Pull out 
+#OG kush: 10, 325
+og_kush <- bedro_IBS[which(bedro_IBS$FID1 == 325 & bedro_IBS$FID2 == 10), "inv_ibs"]
+og_kush <- as.vector(og_kush$inv_ibs)
+
+
+#amnesia haze: 2, 20, 26, 31
+amnesia_haze <- bedro_IBS[which(bedro_IBS$FID1 %in% c(2,20, 26, 31) & bedro_IBS$FID2 %in% c(2,20, 26, 31)), "inv_ibs"]
+amnesia_haze <- as.vector(amnesia_haze$inv_ibs)
+amnesia_haze_med <- median(amnesia_haze)
+
+#amnesia: 6, 27, 329
+amnesia <- bedro_IBS[which(bedro_IBS$FID1 %in% c(6, 27, 329) & bedro_IBS$FID2 %in% c(6, 27, 329)), "inv_ibs"]
+amnesia <- as.vector(amnesia$inv_ibs)
+amnesia_med <- median(amnesia)
+
+
+#northern lights: 23, 33, 320, 1, 8
+northern <- bedro_IBS[which(bedro_IBS$FID1 %in% c(23, 33, 320, 1, 8) & bedro_IBS$FID2 %in% c(23, 33, 320, 1, 8)), "inv_ibs"]
+northern <- as.vector(northern$inv_ibs)
+northern_med <- median(northern)
+
+gen_clones <- ggplot(data=bedro_IBS, aes(bedro_IBS$`inv_ibs`))+
+  geom_histogram(bins=100, size = 0.8)+
+  geom_vline(xintercept=og_kush, color="#CC79A7", alpha=0.7)+ #OG kush, pink
+  geom_vline(xintercept=amnesia_haze_med, color="#009E73", alpha=0.7)+ #amnesia haze, dark green
+  geom_vline(xintercept=amnesia_med, color="#999999", alpha=0.7)+ #amnesia, grey
+  geom_vline(xintercept=northern_med, color="#E69F00", alpha=0.7)+ #northern lights, light orange
+  labs(x="Genetic distance (1-IBS)", y="Count")
+
+clone_fig <- chem_clones / gen_clones + plot_annotation(tag_levels = 'a')
+
+clone_fig
+#ggsave("../figures/clone_fig.pdf", plot = clone_fig)
+```
+
+There are `r sum(bedro_IBS$inv_ibs < 0.078012)` pairs that are more genetic similar than of the clones.
+
+#CBD vs. THC
+
+```{r cbd_thc, message=FALSE, warning=FALSE}
+
+#Plot CBD vs. THC
+chem_data <- read_csv("../outputs/chem_data.csv")
+ratio_cbd_thc <- dplyr::select(chem_data, "Sample", "thc_total", "CBD")
+
+#get percent CBD and percent THC
+ratio_cbd_thc <- mutate(ratio_cbd_thc, percent_thc = thc_total/10, percent_cbd = CBD/10)
+
+cbd_thc <- ggplot(ratio_cbd_thc, aes(x=percent_cbd,y= percent_thc))+
+  geom_point(size=1, alpha=0.7)+
+  theme_bw()+
+  labs(x="CBD (mg/g)", y="THC (mg/g)")+
+  theme(panel.border = element_blank(), axis.text=element_text(colour = "black", size=10), axis.title=element_text(size = 10, face = "bold"), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black", size = 0.2), plot.title = element_text(size = 9), legend.title = element_blank(), legend.position = "none")
+#ggsave("../figures/cbd_thc.pdf", plot = cbd_thc)
+cbd_thc
+
+```
+
+#Chemical correlation heatmap
+
+```{r chem_cor, message=FALSE, warning=FALSE, include=FALSE}
+#load chemical data
+chem_data <- read_csv("../outputs/chem_data.csv")
+chemicals <- chem_data[6:45]
+
+chemicals[1:40] <- lapply(chemicals[1:40], as.character)
+chemicals[1:40] <- lapply(chemicals[1:40], as.numeric)
+
+#change from tbl to base dataframe.
+chemicals <- as.data.frame(chemicals)
+
+#create an empty matrix for correlations, make matrix with no data and just col and rows from final pheno table.
+pairwise_pheno_correlations=matrix(,ncol(chemicals), ncol(chemicals))
+rownames(pairwise_pheno_correlations)=colnames(chemicals)
+colnames(pairwise_pheno_correlations)=colnames(chemicals)
+#matrix for pvalues.
+pairwise_pheno_correlations_pval=matrix(,ncol(chemicals), ncol(chemicals))
+rownames(pairwise_pheno_correlations_pval)=colnames(chemicals)
+colnames(pairwise_pheno_correlations_pval)=colnames(chemicals)
+
+#Treat the data as all quantitative data and run pearson's correlation.
+for (i in 1:ncol(chemicals)) {
+  phenoname_x = colnames(chemicals)[i]
+  for (j in 1:ncol(chemicals)) {
+    phenoname_y = colnames(chemicals)[j]
+    pairwise_pheno_correlations[j,i]=cor.test(chemicals[,i], chemicals[,j])$estimate
+    pairwise_pheno_correlations_pval[j,i]= cor.test(chemicals[,i], chemicals[,j])$p.value
+  }
+}
+
+#bonferonni correct the pval matrix
+pairwise_pheno_correlations_pval[upper.tri(pairwise_pheno_correlations_pval)] = p.adjust(pairwise_pheno_correlations_pval[upper.tri(pairwise_pheno_correlations_pval)], method = "bonferroni")
+pairwise_pheno_correlations_pval[lower.tri(pairwise_pheno_correlations_pval)] = p.adjust(pairwise_pheno_correlations_pval[lower.tri(pairwise_pheno_correlations_pval)], method = "bonferroni")
+
+#for the supplement save the pval and rho matrices.
+write.table(pairwise_pheno_correlations_pval, file = "../outputs/heatmap_pvals_r.csv", quote = F, sep = ",", row.names = F)
+write.table(pairwise_pheno_correlations, file = "../outputs/heatmap_r.csv", quote = F, sep = ",", row.names = F)
+
+
+
+#make the heat map/
+#Set colour, make colour scale a gradient.
+hmcol = colorRampPalette(brewer.pal(9, "BrBG"))
+
+#Get one half of correlation square (aka one triangle). Set lower to NA.
+pairwise_pheno_correlations[lower.tri(pairwise_pheno_correlations, diag = F)] <- NA
+
+#make heat map for correlations without key.
+pdf("../figures/chem_heatmap.pdf")
+mar.default <- c(0,0,0,0)
+par(mar=mar.default, cex = 0.5)
+heatmap.2(pairwise_pheno_correlations,
+          col = hmcol(1000),
+          key=T,
+          keysize = 0.5,
+          symm = T,
+          Colv = F,
+          Rowv = F,
+          scale = "none",
+          trace="none",
+          dendrogram = "none",
+          density.info = "none",
+          symbreaks = T,
+          colsep = c(0:40),
+          rowsep = c(0:40),
+          sepcolor = "white",
+          sepwidth = c(0.05, 0.05),
+          symkey = T,
+          margin = c(12,12)
+)
+dev.off()
+
+
+#heat map for pvals of correlations.
+#Get one half of correltaion square (aka one triangle). Set lower to NA.
+pairwise_pheno_correlations_pval[upper.tri(pairwise_pheno_correlations_pval)] <- NA
+
+#Pick colours.
+hmcol_p = rev(brewer.pal(3, "YlGn"))
+hmcol_p[3] = "#F7F7F7"
+
+pdf("../figures/chem_heatmap_pval.pdf", width = 8, height = 8)
+mar.default <- c(0,0,0,0)
+par(mar=mar.default, cex = 0.5)
+heatmap.2(pairwise_pheno_correlations_pval,
+          col = hmcol_p,
+          key=T,
+          keysize = 0.5,
+          symm = T,
+          Colv = F,
+          Rowv = F,
+          trace="none",
+          dendrogram = "none",
+          density.info = "none",
+          breaks = c(0, 0.001, 0.05, 1),
+          revC = F,
+          symbreaks = T,
+          colsep = c(0:40),
+          rowsep = c(0:40),
+          sepcolor = "white",
+          sepwidth = c(0.05, 0.05),
+          symkey = T,
+          margin = c(12, 12)
+)
+dev.off()
+
+
+```
+
