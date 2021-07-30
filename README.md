@@ -16,7 +16,7 @@ The genetic data used in the genetic analysis can be found on DRYAD:
 * 2020080607\_bedro_kinship.txt
 
 
-**Please note that the genetic data files generated in this study have chromosomes numbered based on the old numbering system. Within the 'cannabis GWAS' source code the chromosomes are renumbered for presentation in the Manhattan plots according to the new chromosome numbering system for the Cs10 reference genome that was adopted in 2020 (<https://www.ncbi.nlm.nih.gov/assembly/GCF_900626175.2>). All resulting figures from the GWAS follow the new numbering system, however, the raw genetic files still reflect the old numbering system and should be recoded if used by others in the future.**
+**Please note that the genetic data files generated in this study have chromosomes numbered based on the old numbering system. Within the 'cannabis GWAS' source code the chromosomes are renumbered for presentation in the Manhattan plots according to the new chromosome numbering system for the CBDRx reference genome that was adopted in 2020 (<https://www.ncbi.nlm.nih.gov/assembly/GCF_900626175.2>). All resulting figures from the GWAS follow the new numbering system, however, the raw genetic files still reflect the old numbering system and should be recoded if used by others in the future.**
 
 **During the review process some chemical names from the Hazekamp et al. 2016 paper were renamed, these changes are recorded in Supplementary Table 3 and described within the methods of the manuscript.**
 
